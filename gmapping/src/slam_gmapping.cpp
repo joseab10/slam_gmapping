@@ -263,6 +263,10 @@ void SlamGMapping::init()
   if(!private_nh_.getParam("tf_delay", tf_delay_))
     tf_delay_ = transform_publish_period_;
 
+  // Full Map Posterior Parameters
+  if(!private_nh_.getParam("decayModel", decayModel_))
+      decayModel_ = false;
+
 }
 
 
@@ -522,7 +526,7 @@ SlamGMapping::initMapper(const sensor_msgs::LaserScan& scan)
 
   gsp_->setMatchingParameters(maxUrange_, maxRange_, sigma_,
                               kernelSize_, lstep_, astep_, iterations_,
-                              lsigma_, ogain_, lskip_);
+                              lsigma_, ogain_, lskip_, decayModel_);
 
   gsp_->setMotionModelParameters(srr_, srt_, str_, stt_);
   gsp_->setUpdateDistances(linearUpdate_, angularUpdate_, resampleThreshold_);
@@ -685,6 +689,8 @@ SlamGMapping::updateMap(const sensor_msgs::LaserScan& scan)
   matcher.setlaserMaxRange(maxRange_);
   matcher.setusableRange(maxUrange_);
   matcher.setgenerateMap(true);
+
+  matcher.setdecayModel(decayModel_);
 
   GMapping::GridSlamProcessor::Particle best =
           gsp_->getParticles()[gsp_->getBestParticleIndex()];

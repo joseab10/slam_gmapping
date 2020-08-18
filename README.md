@@ -199,6 +199,9 @@ Gain to be used while evaluating the likelihood, for smoothing the resampling ef
 * **~en_fmp** ***(bool, default:*** __false__***)***__:__<br/>
 Enable Full Map Posterior calculations
 
+* **~decayModel** ***(bool, default:*** __false__***)***__:__<br/>
+Use a beam decay map model.
+
 * **~alpha_0** ***(float, default:*** __1.0__***)***__:__<br/>
 
 * **~beta_0** ***(float, default:*** __1.0__***)***__:__<br/>

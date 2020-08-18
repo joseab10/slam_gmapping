@@ -143,6 +143,9 @@ class SlamGMapping
     double llsamplestep_;
     double lasamplerange_;
     double lasamplestep_;
+
+    // Parameters used for Full Map Posterior
+    bool decayModel_;
     
     ros::NodeHandle private_nh_;
     
