@@ -264,8 +264,20 @@ void SlamGMapping::init()
     tf_delay_ = transform_publish_period_;
 
   // Full Map Posterior Parameters
+  if(!private_nh_.getParam("publishFullPosterior", publishFullPosterior_))
+      publishFullPosterior_ = false;
   if(!private_nh_.getParam("decayModel", decayModel_))
       decayModel_ = false;
+  if(!private_nh_.getParam("publishRawMap", publishRawMap_))
+      publishRawMap_ = false;
+  if(!private_nh_.getParam("publishParticles", publishParticles_))
+      publishParticles_ = false;
+
+  if(!private_nh_.getParam("alpha0", alpha0_))
+      alpha0_ = 1.0;
+  if(!private_nh_.getParam("beta0", beta0_))
+      beta0_ = decayModel_ ? 0.0 : 1.0;
+
 
 }
 
@@ -276,6 +288,13 @@ void SlamGMapping::startLiveSlam()
   sst_ = node_.advertise<nav_msgs::OccupancyGrid>("map", 1, true);
   sstm_ = node_.advertise<nav_msgs::MapMetaData>("map_metadata", 1, true);
   ss_ = node_.advertiseService("dynamic_map", &SlamGMapping::mapCallback, this);
+  if (publishFullPosterior_) {
+      sam_ = node_.advertise<gmapping::doubleMap>("fmp_alpha", 1, true);
+      sbm_ = node_.advertise<gmapping::doubleMap>("fmp_beta", 1, true);
+  }
+  if (publishRawMap_)
+      srm_ = node_.advertise<gmapping::doubleMap>("raw_map", 1, true);
+  
   scan_filter_sub_ = new message_filters::Subscriber<sensor_msgs::LaserScan>(node_, "scan", 5);
   scan_filter_ = new tf::MessageFilter<sensor_msgs::LaserScan>(*scan_filter_sub_, tf_, odom_frame_, 5);
   scan_filter_->registerCallback(boost::bind(&SlamGMapping::laserCallback, this, _1));
@@ -533,7 +552,7 @@ SlamGMapping::initMapper(const sensor_msgs::LaserScan& scan)
   gsp_->setUpdatePeriod(temporalUpdate_);
   gsp_->setgenerateMap(false);
   gsp_->GridSlamProcessor::init(particles_, xmin_, ymin_, xmax_, ymax_,
-                                delta_, initialPose);
+                                delta_, initialPose, decayModel_);
   gsp_->setllsamplerange(llsamplerange_);
   gsp_->setllsamplestep(llsamplestep_);
   /// @todo Check these calls; in the gmapping gui, they use
@@ -708,6 +727,14 @@ SlamGMapping::updateMap(const sensor_msgs::LaserScan& scan)
     map_.map.info.origin.orientation.y = 0.0;
     map_.map.info.origin.orientation.z = 0.0;
     map_.map.info.origin.orientation.w = 1.0;
+
+    if (publishFullPosterior_){
+        alpha_map_.info = map_.map.info;
+
+        beta_map_.info = map_.map.info;
+    }
+    if (publishRawMap_)
+        raw_map_.info = map_.map.info;
   } 
 
   GMapping::Point center;
@@ -715,7 +742,9 @@ SlamGMapping::updateMap(const sensor_msgs::LaserScan& scan)
   center.y=(ymin_ + ymax_) / 2.0;
 
   GMapping::ScanMatcherMap smap(center, xmin_, ymin_, xmax_, ymax_, 
-                                delta_);
+                                delta_, decayModel_);
+  smap.setAlpha(alpha0_);
+  smap.setBeta(beta0_);
 
   ROS_DEBUG("Trajectory tree:");
   for(GMapping::GridSlamProcessor::TNode* n = best.node;
@@ -755,8 +784,23 @@ SlamGMapping::updateMap(const sensor_msgs::LaserScan& scan)
     map_.map.info.origin.position.y = ymin_;
     map_.map.data.resize(map_.map.info.width * map_.map.info.height);
 
+    if (publishFullPosterior_){
+        alpha_map_.info = map_.map.info;
+        alpha_map_.data.resize(map_.map.info.width * map_.map.info.height);
+
+        beta_map_.info = map_.map.info;
+        beta_map_.data.resize(map_.map.info.width * map_.map.info.height);
+    }
+    if (publishRawMap_){
+        raw_map_.info = map_.map.info;
+        raw_map_.data.resize(map_.map.info.width * map_.map.info.height);
+    }
+
     ROS_DEBUG("map origin: (%f, %f)", map_.map.info.origin.position.x, map_.map.info.origin.position.y);
   }
+
+  double alpha = publishFullPosterior_? smap.getAlpha() : 1.0;
+  double beta = publishFullPosterior_? smap.getBeta() : decayModel_ ? 0.0 : 1.0;
 
   for(int x=0; x < smap.getMapSizeX(); x++)
   {
@@ -764,8 +808,17 @@ SlamGMapping::updateMap(const sensor_msgs::LaserScan& scan)
     {
       /// @todo Sort out the unknown vs. free vs. obstacle thresholding
       GMapping::IntPoint p(x, y);
-      double occ=smap.cell(p);
+      GMapping::PointAccumulator cell = smap.cell(p);
+      double occ = cell;
       assert(occ <= 1.0);
+
+      if (publishRawMap_) {
+          if (decayModel_)
+              raw_map_.data[MAP_IDX(map_.map.info.width, x, y)] = (cell.n + alpha - 1) / (cell.R + beta);
+          else
+            raw_map_.data[MAP_IDX(map_.map.info.width, x, y)] = (cell.n + alpha - 1) / (cell.visits + alpha + beta -2);
+      }
+
       if(occ < 0)
         map_.map.data[MAP_IDX(map_.map.info.width, x, y)] = -1;
       else if(occ > occ_thresh_)
@@ -775,6 +828,11 @@ SlamGMapping::updateMap(const sensor_msgs::LaserScan& scan)
       }
       else
         map_.map.data[MAP_IDX(map_.map.info.width, x, y)] = 0;
+
+      if (publishFullPosterior_){
+          alpha_map_.data[MAP_IDX(map_.map.info.width, x, y)] = smap.alpha(p);
+          beta_map_.data[MAP_IDX(map_.map.info.width, x, y)] = smap.beta(p);
+      }
     }
   }
   got_map_ = true;
@@ -785,6 +843,22 @@ SlamGMapping::updateMap(const sensor_msgs::LaserScan& scan)
 
   sst_.publish(map_.map);
   sstm_.publish(map_.map.info);
+
+  if (publishRawMap_){
+      raw_map_.header = map_.map.header;
+
+      srm_.publish(raw_map_);
+  }
+  if (publishFullPosterior_){
+      alpha_map_.header = map_.map.header;
+      beta_map_.header = map_.map.header;
+
+      alpha_map_.param = alpha;
+      beta_map_.param = beta;
+
+      sam_.publish(alpha_map_);
+      sbm_.publish(beta_map_);
+  }
 }
 
 bool 
