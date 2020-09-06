@@ -266,8 +266,35 @@ void SlamGMapping::init()
   // Full Map Posterior Parameters
   if(!private_nh_.getParam("publishFullPosterior", publishFullPosterior_))
       publishFullPosterior_ = false;
-  if(!private_nh_.getParam("decayModel", decayModel_))
-      decayModel_ = false;
+
+  std::string mapModelStr;
+  if(!private_nh_.getParam("mapModel", mapModelStr))
+      mapModelStr = "";
+
+  if (mapModelStr == "ReflectionModel")
+      mapModel_ = GMapping::ScanMatcherMap::MapModel::ReflectionModel;
+  else if (mapModelStr == "ExpDecayModel")
+      mapModel_ = GMapping::ScanMatcherMap::MapModel::ExpDecayModel;
+  else {
+      mapModel_ = GMapping::ScanMatcherMap::MapModel::ReflectionModel;
+      ROS_WARN("No map model type defined, using ReflectionModel");
+  }
+
+  std::string partWeightStr;
+  if(!private_nh_.getParam("partWeighting", partWeightStr))
+      partWeightStr = "";
+
+  if (partWeightStr ==  "ClosestMeanHitLikelihood")
+      particleWeighting_ = GMapping::ScanMatcher::ParticleWeighting::ClosestMeanHitLikelihood;
+  else if (partWeightStr == "ForwardSensorModel")
+      particleWeighting_ = GMapping::ScanMatcher::ParticleWeighting::ForwardSensorModel;
+  else if (partWeightStr == "MeasurementLikelihood")
+      particleWeighting_ = GMapping::ScanMatcher::ParticleWeighting::MeasurementLikelihood;
+  else {
+      particleWeighting_ = GMapping::ScanMatcher::ParticleWeighting::ClosestMeanHitLikelihood;
+      ROS_WARN("No method for computing the particle weights entered, using Closest Mean Hit Likelihood");
+  }
+
   if(!private_nh_.getParam("publishRawMap", publishRawMap_))
       publishRawMap_ = false;
   if(!private_nh_.getParam("publishParticles", publishParticles_))
@@ -276,7 +303,7 @@ void SlamGMapping::init()
   if(!private_nh_.getParam("alpha0", alpha0_))
       alpha0_ = 1.0;
   if(!private_nh_.getParam("beta0", beta0_))
-      beta0_ = decayModel_ ? 0.0 : 1.0;
+      beta0_ = (mapModel_ == GMapping::ScanMatcherMap::MapModel::ExpDecayModel) ? 0.0 : 1.0;
 
 
 }
@@ -545,14 +572,14 @@ SlamGMapping::initMapper(const sensor_msgs::LaserScan& scan)
 
   gsp_->setMatchingParameters(maxUrange_, maxRange_, sigma_,
                               kernelSize_, lstep_, astep_, iterations_,
-                              lsigma_, ogain_, lskip_, decayModel_);
+                              lsigma_, ogain_, lskip_, mapModel_, particleWeighting_);
 
   gsp_->setMotionModelParameters(srr_, srt_, str_, stt_);
   gsp_->setUpdateDistances(linearUpdate_, angularUpdate_, resampleThreshold_);
   gsp_->setUpdatePeriod(temporalUpdate_);
   gsp_->setgenerateMap(false);
   gsp_->GridSlamProcessor::init(particles_, xmin_, ymin_, xmax_, ymax_,
-                                delta_, initialPose, decayModel_);
+                                delta_, initialPose, mapModel_, alpha0_, beta0_);
   gsp_->setllsamplerange(llsamplerange_);
   gsp_->setllsamplestep(llsamplestep_);
   /// @todo Check these calls; in the gmapping gui, they use
@@ -709,7 +736,7 @@ SlamGMapping::updateMap(const sensor_msgs::LaserScan& scan)
   matcher.setusableRange(maxUrange_);
   matcher.setgenerateMap(true);
 
-  matcher.setdecayModel(decayModel_);
+  //matcher.setdecayModel(mapModel_);
 
   GMapping::GridSlamProcessor::Particle best =
           gsp_->getParticles()[gsp_->getBestParticleIndex()];
@@ -742,7 +769,7 @@ SlamGMapping::updateMap(const sensor_msgs::LaserScan& scan)
   center.y=(ymin_ + ymax_) / 2.0;
 
   GMapping::ScanMatcherMap smap(center, xmin_, ymin_, xmax_, ymax_, 
-                                delta_, decayModel_);
+                                delta_, mapModel_);
   smap.setAlpha(alpha0_);
   smap.setBeta(beta0_);
 
@@ -800,7 +827,8 @@ SlamGMapping::updateMap(const sensor_msgs::LaserScan& scan)
   }
 
   double alpha = publishFullPosterior_? smap.getAlpha() : 1.0;
-  double beta = publishFullPosterior_? smap.getBeta() : decayModel_ ? 0.0 : 1.0;
+  double beta = publishFullPosterior_? smap.getBeta() :
+          mapModel_ == GMapping::ScanMatcherMap::MapModel::ExpDecayModel ? 0.0 : 1.0;
 
   for(int x=0; x < smap.getMapSizeX(); x++)
   {
@@ -809,11 +837,21 @@ SlamGMapping::updateMap(const sensor_msgs::LaserScan& scan)
       /// @todo Sort out the unknown vs. free vs. obstacle thresholding
       GMapping::IntPoint p(x, y);
       GMapping::PointAccumulator cell = smap.cell(p);
-      double occ = cell;
+      double occ = 0;
+      if (mapModel_ == GMapping::ScanMatcherMap::MapModel::ReflectionModel)
+          occ = cell;
+      else if (mapModel_ == GMapping::ScanMatcherMap::MapModel::ExpDecayModel){
+          // FIXME:
+          // Convert from decay to reflection map
+          //double lambda = (cell.n + smap.getAlpha()) / (cell.R + smap.getBeta());
+          //occ = exp(- lambda * smap.getDelta());
+          occ = cell;
+      }
+
       assert(occ <= 1.0);
 
       if (publishRawMap_) {
-          if (decayModel_)
+          if (mapModel_ == GMapping::ScanMatcherMap::MapModel::ExpDecayModel)
               raw_map_.data[MAP_IDX(map_.map.info.width, x, y)] = (cell.n + alpha - 1) / (cell.R + beta);
           else
             raw_map_.data[MAP_IDX(map_.map.info.width, x, y)] = (cell.n + alpha - 1) / (cell.visits + alpha + beta -2);

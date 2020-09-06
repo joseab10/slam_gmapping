@@ -154,7 +154,8 @@ class SlamGMapping
 
     // Parameters used for Full Map Posterior
     bool publishFullPosterior_;
-    bool decayModel_;
+    GMapping::ScanMatcherMap::MapModel mapModel_;
+    GMapping::ScanMatcher::ParticleWeighting particleWeighting_;
     bool publishRawMap_;
     bool publishParticles_;
     double alpha0_;
