@@ -41,6 +41,7 @@
 #include "gmapping/gridfastslam/gridslamprocessor.h"
 #include "gmapping/sensor/sensor_base/sensor.h"
 #include "gmapping/doubleMap.h"
+#include "gmapping/mapModel.h"
 
 #include <boost/thread.hpp>
 
@@ -71,6 +72,7 @@ class SlamGMapping
     ros::Publisher sam_;
     ros::Publisher sbm_;
     ros::Publisher srm_;
+    ros::Publisher smm_;
     tf::TransformListener tf_;
     message_filters::Subscriber<sensor_msgs::LaserScan>* scan_filter_sub_;
     tf::MessageFilter<sensor_msgs::LaserScan>* scan_filter_;
@@ -97,6 +99,8 @@ class SlamGMapping
     gmapping::doubleMap alpha_map_;
     gmapping::doubleMap beta_map_;
     gmapping::doubleMap raw_map_;
+    // Map Model message
+    gmapping::mapModel map_model_msg_;
 
     ros::Duration map_update_interval_;
     tf::Transform map_to_odom_;
@@ -154,7 +158,8 @@ class SlamGMapping
 
     // Parameters used for Full Map Posterior
     bool publishFullPosterior_;
-    GMapping::ScanMatcherMap::MapModel mapModel_;
+    GMapping::ScanMatcherMap::MapModel sm_mapModel_;
+    int8_t mapModel_;
     GMapping::ScanMatcher::ParticleWeighting particleWeighting_;
     bool publishRawMap_;
     bool publishParticles_;

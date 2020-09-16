@@ -271,14 +271,22 @@ void SlamGMapping::init()
   if(!private_nh_.getParam("mapModel", mapModelStr))
       mapModelStr = "";
 
-  if (mapModelStr == "ReflectionModel")
-      mapModel_ = GMapping::ScanMatcherMap::MapModel::ReflectionModel;
-  else if (mapModelStr == "ExpDecayModel")
-      mapModel_ = GMapping::ScanMatcherMap::MapModel::ExpDecayModel;
+  if (mapModelStr == "ReflectionModel") {
+      sm_mapModel_ = GMapping::ScanMatcherMap::MapModel::ReflectionModel;
+      mapModel_ = gmapping::mapModel::REFLECTION_MODEL;
+  }
+  else if (mapModelStr == "ExpDecayModel") {
+      sm_mapModel_ = GMapping::ScanMatcherMap::MapModel::ExpDecayModel;
+      mapModel_ = gmapping::mapModel::DECAY_MODEL;
+  }
   else {
-      mapModel_ = GMapping::ScanMatcherMap::MapModel::ReflectionModel;
+      sm_mapModel_ = GMapping::ScanMatcherMap::MapModel::ReflectionModel;
+      mapModel_ = gmapping::mapModel::REFLECTION_MODEL;
       ROS_WARN("No map model type defined, using ReflectionModel");
   }
+  map_model_msg_.header.seq = 1;
+  map_model_msg_.header.stamp = ros::Time::now();
+  map_model_msg_.map_model = mapModel_;
 
   std::string partWeightStr;
   if(!private_nh_.getParam("partWeighting", partWeightStr))
@@ -303,7 +311,7 @@ void SlamGMapping::init()
   if(!private_nh_.getParam("alpha0", alpha0_))
       alpha0_ = 1.0;
   if(!private_nh_.getParam("beta0", beta0_))
-      beta0_ = (mapModel_ == GMapping::ScanMatcherMap::MapModel::ExpDecayModel) ? 0.0 : 1.0;
+      beta0_ = (mapModel_ == gmapping::mapModel::DECAY_MODEL) ? 0.0 : 1.0;
 
 
 }
@@ -315,6 +323,10 @@ void SlamGMapping::startLiveSlam()
   sst_ = node_.advertise<nav_msgs::OccupancyGrid>("map", 1, true);
   sstm_ = node_.advertise<nav_msgs::MapMetaData>("map_metadata", 1, true);
   ss_ = node_.advertiseService("dynamic_map", &SlamGMapping::mapCallback, this);
+
+  smm_ = node_.advertise<gmapping::mapModel>("map_model", 1, true);
+  smm_.publish(map_model_msg_);
+
   if (publishFullPosterior_) {
       sam_ = node_.advertise<gmapping::doubleMap>("fmp_alpha", 1, true);
       sbm_ = node_.advertise<gmapping::doubleMap>("fmp_beta", 1, true);
@@ -331,6 +343,7 @@ void SlamGMapping::startLiveSlam()
 
 void SlamGMapping::startReplay(const std::string & bag_fname, std::string scan_topic)
 {
+    //TODO: Fix this guy just as startLiveSlam()
   double transform_publish_period;
   ros::NodeHandle private_nh_("~");
   entropy_publisher_ = private_nh_.advertise<std_msgs::Float64>("entropy", 1, true);
@@ -572,14 +585,14 @@ SlamGMapping::initMapper(const sensor_msgs::LaserScan& scan)
 
   gsp_->setMatchingParameters(maxUrange_, maxRange_, sigma_,
                               kernelSize_, lstep_, astep_, iterations_,
-                              lsigma_, ogain_, lskip_, mapModel_, particleWeighting_);
+                              lsigma_, ogain_, lskip_, sm_mapModel_, particleWeighting_);
 
   gsp_->setMotionModelParameters(srr_, srt_, str_, stt_);
   gsp_->setUpdateDistances(linearUpdate_, angularUpdate_, resampleThreshold_);
   gsp_->setUpdatePeriod(temporalUpdate_);
-  gsp_->setgenerateMap(false);
+  gsp_->setgenerateMap(true);
   gsp_->GridSlamProcessor::init(particles_, xmin_, ymin_, xmax_, ymax_,
-                                delta_, initialPose, mapModel_, alpha0_, beta0_);
+                                delta_, initialPose, sm_mapModel_, alpha0_, beta0_);
   gsp_->setllsamplerange(llsamplerange_);
   gsp_->setllsamplestep(llsamplestep_);
   /// @todo Check these calls; in the gmapping gui, they use
@@ -727,6 +740,9 @@ SlamGMapping::updateMap(const sensor_msgs::LaserScan& scan)
 {
   ROS_DEBUG("Update map");
   boost::mutex::scoped_lock map_lock (map_mutex_);
+  // Now that gmapping is computing the map for every scan, we don't need to use the scan matcher again,
+  // just copy the map from the best particle.
+  /*
   GMapping::ScanMatcher matcher;
 
   matcher.setLaserParameters(scan.ranges.size(), &(laser_angles_[0]),
@@ -735,8 +751,8 @@ SlamGMapping::updateMap(const sensor_msgs::LaserScan& scan)
   matcher.setlaserMaxRange(maxRange_);
   matcher.setusableRange(maxUrange_);
   matcher.setgenerateMap(true);
-
-  //matcher.setdecayModel(mapModel_);
+  matcher.setmapModel(mapModel_);
+  */
 
   GMapping::GridSlamProcessor::Particle best =
           gsp_->getParticles()[gsp_->getBestParticleIndex()];
@@ -768,6 +784,8 @@ SlamGMapping::updateMap(const sensor_msgs::LaserScan& scan)
   center.x=(xmin_ + xmax_) / 2.0;
   center.y=(ymin_ + ymax_) / 2.0;
 
+  GMapping::ScanMatcherMap smap = best.map;
+  /*
   GMapping::ScanMatcherMap smap(center, xmin_, ymin_, xmax_, ymax_, 
                                 delta_, mapModel_);
   smap.setAlpha(alpha0_);
@@ -791,6 +809,7 @@ SlamGMapping::updateMap(const sensor_msgs::LaserScan& scan)
     matcher.computeActiveArea(smap, n->pose, &((*n->reading)[0]));
     matcher.registerScan(smap, n->pose, &((*n->reading)[0]));
   }
+  */
 
   // the map may have expanded, so resize ros message as well
   if(map_.map.info.width != (unsigned int) smap.getMapSizeX() || map_.map.info.height != (unsigned int) smap.getMapSizeY()) {
@@ -829,6 +848,7 @@ SlamGMapping::updateMap(const sensor_msgs::LaserScan& scan)
   double alpha = publishFullPosterior_? smap.getAlpha() : 1.0;
   double beta = publishFullPosterior_? smap.getBeta() :
           mapModel_ == GMapping::ScanMatcherMap::MapModel::ExpDecayModel ? 0.0 : 1.0;
+  double d = smap.getDelta() * sqrt(2);
 
   for(int x=0; x < smap.getMapSizeX(); x++)
   {
@@ -837,15 +857,13 @@ SlamGMapping::updateMap(const sensor_msgs::LaserScan& scan)
       /// @todo Sort out the unknown vs. free vs. obstacle thresholding
       GMapping::IntPoint p(x, y);
       GMapping::PointAccumulator cell = smap.cell(p);
-      double occ = 0;
-      if (mapModel_ == GMapping::ScanMatcherMap::MapModel::ReflectionModel)
-          occ = cell;
-      else if (mapModel_ == GMapping::ScanMatcherMap::MapModel::ExpDecayModel){
-          // FIXME:
-          // Convert from decay to reflection map
-          //double lambda = (cell.n + smap.getAlpha()) / (cell.R + smap.getBeta());
-          //occ = exp(- lambda * smap.getDelta());
-          occ = cell;
+      double occ = smap.cell_value(p);
+
+      if (mapModel_ == GMapping::ScanMatcherMap::MapModel::ExpDecayModel){
+          // Convert from decay rate to occupancy map
+          if (occ != -1.0) {
+              occ = 1.0 - exp(-occ * d);
+          }
       }
 
       assert(occ <= 1.0);

@@ -12,6 +12,7 @@ include_directories(src)
 add_message_files(
         FILES
         doubleMap.msg
+        mapModel.msg
 )
 
 generate_messages(
