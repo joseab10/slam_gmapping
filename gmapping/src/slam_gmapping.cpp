@@ -861,7 +861,7 @@ SlamGMapping::updateMap(const sensor_msgs::LaserScan& scan)
 
       if (mapModel_ == GMapping::ScanMatcherMap::MapModel::ExpDecayModel){
           // Convert from decay rate to occupancy map
-          if (occ != -1.0) {
+          if (occ >= 0.0) {
               occ = 1.0 - exp(-occ * d);
           }
       }
