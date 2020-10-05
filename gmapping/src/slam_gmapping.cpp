@@ -859,7 +859,7 @@ SlamGMapping::updateMap(const sensor_msgs::LaserScan& scan)
       GMapping::PointAccumulator cell = smap.cell(p);
       double occ = smap.cell_value(p);
 
-      if (mapModel_ == GMapping::ScanMatcherMap::MapModel::ExpDecayModel){
+      if (sm_mapModel_ == GMapping::ScanMatcherMap::MapModel::ExpDecayModel){
           // Convert from decay rate to occupancy map
           if (occ >= 0.0) {
               occ = 1.0 - exp(-occ * d);
