@@ -263,6 +263,14 @@ void SlamGMapping::init()
   if(!private_nh_.getParam("tf_delay", tf_delay_))
     tf_delay_ = transform_publish_period_;
 
+  // Log file
+  std::string log_file;
+  if (!private_nh_.getParam("outputLog", log_file))
+      log_file = "";
+
+  if (log_file != "")
+      gsp_->m_outputStream.open(log_file, std::ios::out | std::ios::app);
+
   // Full Map Posterior Parameters
   if(!private_nh_.getParam("publishFullPosterior", publishFullPosterior_))
       publishFullPosterior_ = false;
