@@ -268,12 +268,16 @@ void SlamGMapping::init()
   if (!private_nh_.getParam("outputLog", log_file))
       log_file = "";
 
-  if (log_file != "")
+  if (log_file != "") {
       gsp_->m_outputStream.open(log_file, std::ios::out | std::ios::app);
+      ROS_INFO("Saving SLAM output data to %s.", log_file.c_str());
+  }
 
   // Full Map Posterior Parameters
   if(!private_nh_.getParam("publishFullPosterior", publishFullPosterior_))
       publishFullPosterior_ = false;
+  if (publishFullPosterior_)
+    ROS_INFO("Publishing alpha and beta maps for Full Map Posterior Distribution.");
 
   std::string mapModelStr;
   if(!private_nh_.getParam("mapModel", mapModelStr))
@@ -282,10 +286,12 @@ void SlamGMapping::init()
   if (mapModelStr == "ReflectionModel") {
       sm_mapModel_ = GMapping::ScanMatcherMap::MapModel::ReflectionModel;
       mapModel_ = gmapping::mapModel::REFLECTION_MODEL;
+      ROS_INFO("Using Reflection Model for the map.");
   }
   else if (mapModelStr == "ExpDecayModel") {
       sm_mapModel_ = GMapping::ScanMatcherMap::MapModel::ExpDecayModel;
       mapModel_ = gmapping::mapModel::DECAY_MODEL;
+      ROS_INFO("Using Exponential Decay Rate Model for the map.");
   }
   else {
       sm_mapModel_ = GMapping::ScanMatcherMap::MapModel::ReflectionModel;
@@ -300,27 +306,42 @@ void SlamGMapping::init()
   if(!private_nh_.getParam("partWeighting", partWeightStr))
       partWeightStr = "";
 
-  if (partWeightStr ==  "ClosestMeanHitLikelihood")
+  if (partWeightStr ==  "ClosestMeanHitLikelihood") {
       particleWeighting_ = GMapping::ScanMatcher::ParticleWeighting::ClosestMeanHitLikelihood;
-  else if (partWeightStr == "ForwardSensorModel")
+      ROS_INFO("Using the Closest Mean Hit Likelihood (Original) method for particle importance weighting.");
+  }
+  else if (partWeightStr == "ForwardSensorModel") {
       particleWeighting_ = GMapping::ScanMatcher::ParticleWeighting::ForwardSensorModel;
-  else if (partWeightStr == "MeasurementLikelihood")
+      ROS_INFO("Using the Forward Sensor Model method for particle importance weighting.");
+  }
+  else if (partWeightStr == "MeasurementLikelihood") {
       particleWeighting_ = GMapping::ScanMatcher::ParticleWeighting::MeasurementLikelihood;
+      ROS_INFO("Using the Measurement Likelihood method for particle importance weighting.");
+  }
   else {
       particleWeighting_ = GMapping::ScanMatcher::ParticleWeighting::ClosestMeanHitLikelihood;
-      ROS_WARN("No method for computing the particle weights entered, using Closest Mean Hit Likelihood");
+      ROS_WARN("No method for computing the particle weights entered, using Closest Mean Hit Likelihood (Original).");
   }
 
   if(!private_nh_.getParam("publishRawMap", publishRawMap_))
       publishRawMap_ = false;
+  if (publishRawMap_)
+      ROS_INFO("Publishing raw (no threshold) map. ");
   if(!private_nh_.getParam("publishParticles", publishParticles_))
       publishParticles_ = false;
+  if (publishParticles_)
+      ROS_INFO("Publishing individual particles. (FUTURE).");
 
   if(!private_nh_.getParam("alpha0", alpha0_))
       alpha0_ = 1.0;
   if(!private_nh_.getParam("beta0", beta0_))
       beta0_ = (mapModel_ == gmapping::mapModel::DECAY_MODEL) ? 0.0 : 1.0;
+  ROS_INFO("Using prior values of alpha=%f, beta=%f.", alpha0_, beta0_);
 
+  if(!private_nh_.getParam("doImprovedPose", doImprovedPose_))
+      doImprovedPose_ = true;
+  if(!private_nh_.getParam("publishAvgPose", publishAvgPose_))
+      publishAvgPose_ = true;
 
 }
 
@@ -346,6 +367,7 @@ void SlamGMapping::startLiveSlam()
   scan_filter_ = new tf::MessageFilter<sensor_msgs::LaserScan>(*scan_filter_sub_, tf_, odom_frame_, 5);
   scan_filter_->registerCallback(boost::bind(&SlamGMapping::laserCallback, this, _1));
 
+  sub_locOnly_ = node_.subscribe("doLocOnly", 1, &SlamGMapping::startLocalizationOnly, this);
   transform_thread_ = new boost::thread(boost::bind(&SlamGMapping::publishLoop, this, transform_publish_period_));
 }
 
@@ -353,7 +375,7 @@ void SlamGMapping::startReplay(const std::string & bag_fname, std::string scan_t
 {
     //TODO: Fix this guy just as startLiveSlam()
   double transform_publish_period;
-  ros::NodeHandle private_nh_("~");
+  // ros::NodeHandle private_nh_("~");
   entropy_publisher_ = private_nh_.advertise<std_msgs::Float64>("entropy", 1, true);
   sst_ = node_.advertise<nav_msgs::OccupancyGrid>("map", 1, true);
   sstm_ = node_.advertise<nav_msgs::MapMetaData>("map_metadata", 1, true);
@@ -556,7 +578,7 @@ SlamGMapping::initMapper(const sensor_msgs::LaserScan& scan)
   GMapping::OrientedPoint gmap_pose(0, 0, 0);
 
   // setting maxRange and maxUrange here so we can set a reasonable default
-  ros::NodeHandle private_nh_("~");
+  // ros::NodeHandle private_nh_("~");
   if(!private_nh_.getParam("maxRange", maxRange_))
     maxRange_ = scan.range_max - 0.01;
   if(!private_nh_.getParam("maxUrange", maxUrange_))
@@ -600,7 +622,7 @@ SlamGMapping::initMapper(const sensor_msgs::LaserScan& scan)
   gsp_->setUpdatePeriod(temporalUpdate_);
   gsp_->setgenerateMap(true);
   gsp_->GridSlamProcessor::init(particles_, xmin_, ymin_, xmax_, ymax_,
-                                delta_, initialPose, sm_mapModel_, alpha0_, beta0_);
+                                delta_, initialPose, sm_mapModel_, alpha0_, beta0_, doImprovedPose_);
   gsp_->setllsamplerange(llsamplerange_);
   gsp_->setllsamplestep(llsamplestep_);
   /// @todo Check these calls; in the gmapping gui, they use
@@ -700,8 +722,15 @@ SlamGMapping::laserCallback(const sensor_msgs::LaserScan::ConstPtr& scan)
   {
     ROS_DEBUG("scan processed");
 
-    GMapping::OrientedPoint mpose = gsp_->getParticles()[gsp_->getBestParticleIndex()].pose;
-    ROS_DEBUG("new best pose: %.3f %.3f %.3f", mpose.x, mpose.y, mpose.theta);
+    GMapping::OrientedPoint mpose;
+    if(publishAvgPose_) {
+        mpose = gsp_->getAveragePose();
+        ROS_DEBUG("new best pose: %.3f %.3f %.3f", mpose.x, mpose.y, mpose.theta);
+    }
+    else {
+        mpose = gsp_->getBestPose();
+        ROS_DEBUG("new average pose: %.3f %.3f %.3f", mpose.x, mpose.y, mpose.theta);
+    }
     ROS_DEBUG("odom pose: %.3f %.3f %.3f", odom_pose.x, odom_pose.y, odom_pose.theta);
     ROS_DEBUG("correction: %.3f %.3f %.3f", mpose.x - odom_pose.x, mpose.y - odom_pose.y, mpose.theta - odom_pose.theta);
 
@@ -792,7 +821,7 @@ SlamGMapping::updateMap(const sensor_msgs::LaserScan& scan)
   center.x=(xmin_ + xmax_) / 2.0;
   center.y=(ymin_ + ymax_) / 2.0;
 
-  GMapping::ScanMatcherMap smap = best.map;
+  GMapping::ScanMatcherMap smap = gsp_->getBestMap();
   /*
   GMapping::ScanMatcherMap smap(center, xmin_, ymin_, xmax_, ymax_, 
                                 delta_, mapModel_);
@@ -945,4 +974,19 @@ void SlamGMapping::publishTransform()
   ros::Time tf_expiration = ros::Time::now() + ros::Duration(tf_delay_);
   tfB_->sendTransform( tf::StampedTransform (map_to_odom_, tf_expiration, map_frame_, odom_frame_));
   map_to_odom_mutex_.unlock();
+}
+
+void SlamGMapping::startLocalizationOnly(const std_msgs::Bool &msg) {
+    if(msg.data) {
+
+        ROS_INFO("Starting Localization-Only.");
+        GMapping::OrientedPoint initialLocPose;
+
+        if (publishAvgPose_)
+            initialLocPose = gsp_->getAveragePose();
+        else
+            initialLocPose = gsp_->getBestPose();
+
+        gsp_->reInitForLocalization(initialLocPose);
+    }
 }

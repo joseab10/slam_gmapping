@@ -32,6 +32,7 @@
 #include "ros/ros.h"
 #include "sensor_msgs/LaserScan.h"
 #include "std_msgs/Float64.h"
+#include "std_msgs/Bool.h"
 #include "nav_msgs/GetMap.h"
 #include "tf/transform_listener.h"
 #include "tf/transform_broadcaster.h"
@@ -121,6 +122,7 @@ class SlamGMapping
     bool getOdomPose(GMapping::OrientedPoint& gmap_pose, const ros::Time& t);
     bool initMapper(const sensor_msgs::LaserScan& scan);
     bool addScan(const sensor_msgs::LaserScan& scan, GMapping::OrientedPoint& gmap_pose);
+    void startLocalizationOnly(const std_msgs::Bool& msg);
     double computePoseEntropy();
     
     // Parameters used by GMapping
@@ -158,6 +160,9 @@ class SlamGMapping
 
     // Parameters used for Full Map Posterior
     bool publishFullPosterior_;
+    bool doImprovedPose_;
+    bool publishAvgPose_;
+    ros::Subscriber sub_locOnly_;
     GMapping::ScanMatcherMap::MapModel sm_mapModel_;
     int8_t mapModel_;
     GMapping::ScanMatcher::ParticleWeighting particleWeighting_;
