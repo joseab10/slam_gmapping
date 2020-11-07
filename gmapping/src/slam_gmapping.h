@@ -161,6 +161,7 @@ class SlamGMapping
     // Parameters used for Full Map Posterior
     bool publishFullPosterior_;
     bool doImprovedPose_;
+    bool doLocOnly_;
     bool publishAvgPose_;
     ros::Subscriber sub_locOnly_;
     GMapping::ScanMatcherMap::MapModel sm_mapModel_;

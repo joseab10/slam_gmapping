@@ -367,7 +367,8 @@ void SlamGMapping::startLiveSlam()
   scan_filter_ = new tf::MessageFilter<sensor_msgs::LaserScan>(*scan_filter_sub_, tf_, odom_frame_, 5);
   scan_filter_->registerCallback(boost::bind(&SlamGMapping::laserCallback, this, _1));
 
-  sub_locOnly_ = node_.subscribe("doLocOnly", 1, &SlamGMapping::startLocalizationOnly, this);
+  sub_locOnly_ = node_.subscribe("/doLocOnly", 1, &SlamGMapping::startLocalizationOnly, this);
+  doLocOnly_ = false;
   transform_thread_ = new boost::thread(boost::bind(&SlamGMapping::publishLoop, this, transform_publish_period_));
 }
 
@@ -775,6 +776,10 @@ SlamGMapping::computePoseEntropy()
 void
 SlamGMapping::updateMap(const sensor_msgs::LaserScan& scan)
 {
+  // No need to update the map if we are on Localization-Only SLAM
+  if(doLocOnly_)
+      return;
+
   ROS_DEBUG("Update map");
   boost::mutex::scoped_lock map_lock (map_mutex_);
   // Now that gmapping is computing the map for every scan, we don't need to use the scan matcher again,
@@ -959,7 +964,7 @@ SlamGMapping::mapCallback(nav_msgs::GetMap::Request  &req,
                           nav_msgs::GetMap::Response &res)
 {
   boost::mutex::scoped_lock map_lock (map_mutex_);
-  if(got_map_ && map_.map.info.width && map_.map.info.height)
+  if(got_map_ && map_.map.info.width && map_.map.info.height && !doLocOnly_)
   {
     res = map_;
     return true;
@@ -978,6 +983,8 @@ void SlamGMapping::publishTransform()
 
 void SlamGMapping::startLocalizationOnly(const std_msgs::Bool &msg) {
     if(msg.data) {
+
+        doLocOnly_ = true;
 
         ROS_INFO("Starting Localization-Only.");
         GMapping::OrientedPoint initialLocPose;
