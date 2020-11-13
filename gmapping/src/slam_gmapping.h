@@ -45,6 +45,7 @@
 #include "gmapping/mapModel.h"
 
 #include <boost/thread.hpp>
+#include <fstream>
 
 class SlamGMapping
 {
@@ -123,6 +124,7 @@ class SlamGMapping
     bool initMapper(const sensor_msgs::LaserScan& scan);
     bool addScan(const sensor_msgs::LaserScan& scan, GMapping::OrientedPoint& gmap_pose);
     void startLocalizationOnly(const std_msgs::Bool& msg);
+    void eosCallback(const std_msgs::Bool& msg);
     double computePoseEntropy();
     
     // Parameters used by GMapping
@@ -162,8 +164,10 @@ class SlamGMapping
     bool publishFullPosterior_;
     bool doImprovedPose_;
     bool doLocOnly_;
+    bool shutdownOnEOS_;
     bool publishAvgPose_;
     ros::Subscriber sub_locOnly_;
+    ros::Subscriber sub_eos_;
     GMapping::ScanMatcherMap::MapModel sm_mapModel_;
     int8_t mapModel_;
     GMapping::ScanMatcher::ParticleWeighting particleWeighting_;
@@ -173,6 +177,9 @@ class SlamGMapping
     double beta0_;
     
     ros::NodeHandle private_nh_;
+
+    std::fstream err_file_;
+    std::fstream out_file_;
     
     unsigned long int seed_;
     

@@ -114,6 +114,7 @@ Initial map dimensions and resolution:
 - @b "~/ymax" @b [double] maximum y position in the map [m]
 - @b "~/delta" @b [double] size of one pixel [m]
 
+ TODO: This
 */
 
 
@@ -264,13 +265,23 @@ void SlamGMapping::init()
     tf_delay_ = transform_publish_period_;
 
   // Log file
-  std::string log_file;
-  if (!private_nh_.getParam("outputLog", log_file))
-      log_file = "";
+  std::string csv_file_path, out_file_path;
+  if (!private_nh_.getParam("outputLog", csv_file_path))
+      csv_file_path = "";
+  if (!private_nh_.getParam("redirectOutputPath", out_file_path))
+      out_file_path = "";
 
-  if (log_file != "") {
-      gsp_->m_outputStream.open(log_file, std::ios::out | std::ios::app);
-      ROS_INFO("Saving SLAM output data to %s.", log_file.c_str());
+  if (!out_file_path.empty()) {
+      gsp_->m_outputStream.open(csv_file_path, std::ios::out | std::ios::app);
+      ROS_INFO("Saving SLAM output data to %s.", csv_file_path.c_str());
+  }
+  // Redirect stderr to a file, as it is used as info messages anyways
+  if (!out_file_path.empty()){
+      err_file_.open(out_file_path + ".err", std::ios::out | std::ios::app);
+      out_file_.open(out_file_path + ".out", std::ios::out | std::ios::app);
+      ROS_INFO("Redirecting stdout and stderr to %s .out and .err respectively.", out_file_path.c_str());
+      std::cerr.rdbuf(err_file_.rdbuf());
+      std::cout.rdbuf(out_file_.rdbuf());
   }
 
   // Full Map Posterior Parameters
@@ -342,6 +353,8 @@ void SlamGMapping::init()
       doImprovedPose_ = true;
   if(!private_nh_.getParam("publishAvgPose", publishAvgPose_))
       publishAvgPose_ = true;
+  if(!private_nh_.getParam("autoShutdown", shutdownOnEOS_))
+      shutdownOnEOS_ = false;
 
 }
 
@@ -369,6 +382,9 @@ void SlamGMapping::startLiveSlam()
 
   sub_locOnly_ = node_.subscribe("/doLocOnly", 1, &SlamGMapping::startLocalizationOnly, this);
   doLocOnly_ = false;
+  if (shutdownOnEOS_)
+    sub_eos_ = node_.subscribe("/endOfSim", 1, &SlamGMapping::eosCallback, this);
+
   transform_thread_ = new boost::thread(boost::bind(&SlamGMapping::publishLoop, this, transform_publish_period_));
 }
 
@@ -470,6 +486,12 @@ SlamGMapping::~SlamGMapping()
     delete scan_filter_;
   if (scan_filter_sub_)
     delete scan_filter_sub_;
+
+  if (err_file_.is_open())
+      err_file_.close();
+
+  if (out_file_.is_open())
+      out_file_.close();
 }
 
 bool
@@ -982,18 +1004,26 @@ void SlamGMapping::publishTransform()
 }
 
 void SlamGMapping::startLocalizationOnly(const std_msgs::Bool &msg) {
-    if(msg.data) {
+    if(!bool(msg.data))
+        return;
 
-        doLocOnly_ = true;
+    doLocOnly_ = true;
 
-        ROS_INFO("Starting Localization-Only.");
-        GMapping::OrientedPoint initialLocPose;
+    ROS_INFO("Starting Localization-Only.");
+    GMapping::OrientedPoint initialLocPose;
 
-        if (publishAvgPose_)
-            initialLocPose = gsp_->getAveragePose();
-        else
-            initialLocPose = gsp_->getBestPose();
+    if (publishAvgPose_)
+        initialLocPose = gsp_->getAveragePose();
+    else
+        initialLocPose = gsp_->getBestPose();
 
-        gsp_->reInitForLocalization(initialLocPose);
-    }
+    gsp_->reInitForLocalization(initialLocPose);
+}
+
+void SlamGMapping::eosCallback(const std_msgs::Bool &msg) {
+    if (!msg.data)
+        return;
+
+    ROS_INFO("End of Simulation message received. Shutting down.");
+    ros::shutdown();
 }
