@@ -122,6 +122,8 @@ Initial map dimensions and resolution:
 #include "slam_gmapping.h"
 
 #include <iostream>
+#include <thread>
+#include <chrono>
 
 #include <time.h>
 
@@ -181,6 +183,9 @@ void SlamGMapping::init()
   gsp_odom_ = NULL;
 
   got_first_scan_ = false;
+  doLocOnly_ = false;
+  doLocOnly_received_ = false;
+  eos_received_ = false;
   got_map_ = false;
   
 
@@ -386,6 +391,7 @@ void SlamGMapping::startLiveSlam()
     sub_eos_ = node_.subscribe("/endOfSim", 1, &SlamGMapping::eosCallback, this);
 
   transform_thread_ = new boost::thread(boost::bind(&SlamGMapping::publishLoop, this, transform_publish_period_));
+  eos_thread_ = new boost::thread(boost::bind(&SlamGMapping::eosLoop, this));
 }
 
 void SlamGMapping::startReplay(const std::string & bag_fname, std::string scan_topic)
@@ -459,14 +465,32 @@ void SlamGMapping::startReplay(const std::string & bag_fname, std::string scan_t
   bag.close();
 }
 
+void SlamGMapping::eosLoop(){
+
+    if (!shutdownOnEOS_)
+        return;
+
+    // Wait until all the messages in the queue have been processed before shutting down.
+    while(!(eos_received_ && shutdownOnEOS_ && ros::getGlobalCallbackQueue()->isEmpty()))
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    ROS_INFO("End of Simulation message received. Shutting down.");
+
+    ros::requestShutdown();
+
+}
+
 void SlamGMapping::publishLoop(double transform_publish_period){
   if(transform_publish_period == 0)
     return;
 
+  int sleep_ms = 1000 * transform_publish_period;
+
   ros::Rate r(1.0 / transform_publish_period);
   while(ros::ok()){
     publishTransform();
-    r.sleep();
+    std::this_thread::sleep_for(std::chrono::milliseconds(sleep_ms));
+    //r.sleep();
   }
 }
 
@@ -725,6 +749,27 @@ SlamGMapping::addScan(const sensor_msgs::LaserScan& scan, GMapping::OrientedPoin
 void
 SlamGMapping::laserCallback(const sensor_msgs::LaserScan::ConstPtr& scan)
 {
+    // Reinitialize particle filter if a doLocOnly message has been received,
+    // and the current scan message came after that.
+    // Can't be done immediatly in the doLocOnly callback due to the scan message queue.
+    if (doLocOnly_received_ && scan->header.stamp >= doLocOnly_ts_){
+        doLocOnly_ = true;
+        doLocOnly_received_ = false;
+
+        ROS_INFO("Starting Localization-Only.");
+        GMapping::OrientedPoint initialLocPose;
+        // Try to get the scan pose, as it should be the Ground Truth.
+        if(!getOdomPose(initialLocPose, scan->header.stamp)) {
+            // If not possible, then use the latest known pose.
+            if (publishAvgPose_)
+                initialLocPose = gsp_->getAveragePose();
+            else
+                initialLocPose = gsp_->getBestPose();
+        }
+
+        gsp_->reInitForLocalization(initialLocPose);
+    }
+
   laser_count_++;
   if ((laser_count_ % throttle_scans_) != 0)
     return;
@@ -1007,23 +1052,13 @@ void SlamGMapping::startLocalizationOnly(const std_msgs::Bool &msg) {
     if(!bool(msg.data))
         return;
 
-    doLocOnly_ = true;
-
-    ROS_INFO("Starting Localization-Only.");
-    GMapping::OrientedPoint initialLocPose;
-
-    if (publishAvgPose_)
-        initialLocPose = gsp_->getAveragePose();
-    else
-        initialLocPose = gsp_->getBestPose();
-
-    gsp_->reInitForLocalization(initialLocPose);
+    doLocOnly_received_ = true;
+    doLocOnly_ts_ = ros::Time::now();
 }
 
 void SlamGMapping::eosCallback(const std_msgs::Bool &msg) {
     if (!msg.data)
         return;
 
-    ROS_INFO("End of Simulation message received. Shutting down.");
-    ros::shutdown();
+    eos_received_ = true;
 }

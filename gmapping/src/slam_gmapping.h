@@ -113,6 +113,7 @@ class SlamGMapping
     int throttle_scans_;
 
     boost::thread* transform_thread_;
+    boost::thread* eos_thread_;
 
     std::string base_frame_;
     std::string laser_frame_;
@@ -125,6 +126,7 @@ class SlamGMapping
     bool addScan(const sensor_msgs::LaserScan& scan, GMapping::OrientedPoint& gmap_pose);
     void startLocalizationOnly(const std_msgs::Bool& msg);
     void eosCallback(const std_msgs::Bool& msg);
+    void eosLoop();
     double computePoseEntropy();
     
     // Parameters used by GMapping
@@ -164,6 +166,9 @@ class SlamGMapping
     bool publishFullPosterior_;
     bool doImprovedPose_;
     bool doLocOnly_;
+    bool doLocOnly_received_;
+    bool eos_received_;
+    ros::Time doLocOnly_ts_;
     bool shutdownOnEOS_;
     bool publishAvgPose_;
     ros::Subscriber sub_locOnly_;
