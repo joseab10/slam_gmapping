@@ -180,6 +180,7 @@ class SlamGMapping
     bool publishParticles_;
     double alpha0_;
     double beta0_;
+    double overconfidenceUniformWeight_;
     
     ros::NodeHandle private_nh_;
 

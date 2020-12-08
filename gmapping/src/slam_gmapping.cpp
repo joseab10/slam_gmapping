@@ -326,10 +326,6 @@ void SlamGMapping::init()
       particleWeighting_ = GMapping::ScanMatcher::ParticleWeighting::ClosestMeanHitLikelihood;
       ROS_INFO("Using the Closest Mean Hit Likelihood (Original) method for particle importance weighting.");
   }
-  else if (partWeightStr == "ForwardSensorModel") {
-      particleWeighting_ = GMapping::ScanMatcher::ParticleWeighting::ForwardSensorModel;
-      ROS_INFO("Using the Forward Sensor Model method for particle importance weighting.");
-  }
   else if (partWeightStr == "MeasurementLikelihood") {
       particleWeighting_ = GMapping::ScanMatcher::ParticleWeighting::MeasurementLikelihood;
       ROS_INFO("Using the Measurement Likelihood method for particle importance weighting.");
@@ -338,6 +334,9 @@ void SlamGMapping::init()
       particleWeighting_ = GMapping::ScanMatcher::ParticleWeighting::ClosestMeanHitLikelihood;
       ROS_WARN("No method for computing the particle weights entered, using Closest Mean Hit Likelihood (Original).");
   }
+
+  if(!private_nh_.getParam("overconfidenceUniformWeight", overconfidenceUniformWeight_))
+      overconfidenceUniformWeight_ = 0.0;
 
   if(!private_nh_.getParam("publishRawMap", publishRawMap_))
       publishRawMap_ = false;
@@ -662,7 +661,7 @@ SlamGMapping::initMapper(const sensor_msgs::LaserScan& scan)
 
   gsp_->setMatchingParameters(maxUrange_, maxRange_, sigma_,
                               kernelSize_, lstep_, astep_, iterations_,
-                              lsigma_, ogain_, lskip_, sm_mapModel_, particleWeighting_);
+                              lsigma_, ogain_, lskip_, sm_mapModel_, particleWeighting_, overconfidenceUniformWeight_);
 
   gsp_->setMotionModelParameters(srr_, srt_, str_, stt_);
   gsp_->setUpdateDistances(linearUpdate_, angularUpdate_, resampleThreshold_);
