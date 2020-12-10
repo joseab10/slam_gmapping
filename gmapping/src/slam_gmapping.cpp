@@ -482,7 +482,8 @@ void SlamGMapping::eosLoop(){
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
     ROS_INFO("End of Simulation message received. Shutting down.");
-
+    // Allow some time before shutting down to allow other nodes to finish processing of the last messages.
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
     ros::requestShutdown();
 
 }
